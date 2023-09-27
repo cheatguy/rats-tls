@@ -1,0 +1,54 @@
+name: CI/CD test for fuzz
+on: [push, pull_request, workflow_dispatch]
+
+
+jobs:
+    host_mode:
+      strategy:
+        matrix:
+          tag: [anolis8.6, ubuntu20.04]
+
+      container: runetest/compilation-testing:${{ matrix.tag }}
+  
+      # Use GitHub-hosted runner Ubuntu 20.04
+      runs-on: ubuntu-20.04
+      
+      defaults: 
+        run:
+          shell: bash
+          working-directory: ${{ github.workspace }}
+      env: 
+        HOME: /root
+
+      steps:
+        - name: Checkout Code
+          uses: actions/checkout@v2
+
+        - name: Build and install "host" mode
+          run: |
+            source /root/.bashrc
+            cmake -DBUILD_SAMPLES=on -H. -Bbuild
+            make -C build install
+            
+        # install dependencies
+        - if: ${{matrix.tag == 'ubuntu20.04'}}
+          run: apt-get install lsof
+        - if: ${{matrix.tag == 'anolis8.6'}}
+          run: yum install lsof -y
+
+        - id: rand_port_1
+          uses: ./.github/actions/generate-random-port
+
+        - name: Fuzz fost mode 
+          working-directory: /usr/share/rats-tls/fuzz
+          run: | 
+            PORT=${{steps.rand_port_1.outputs.random-port}}
+            mkdir corpus && cd corpus 
+            base64 /dev/urandom | head -c 1500000 > c1
+            ./fuzz_init -max_len=1500000 -len_control=0  corpus
+
+        - name: Clean the build
+          run: |
+            cd $GITHUB_WORKSPACE 
+            make -C build clean
+            make -C build uninstall 
